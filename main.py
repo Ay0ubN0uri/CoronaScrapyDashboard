@@ -1,40 +1,40 @@
 import streamlit as st
-import os
-from datetime import datetime, timedelta
+import time
 import subprocess
 import sys
 import pandas as pd
 import plotly.express as px
 from streamlit_card import card
-
-
-@st.cache_data
-def get_data_from_csv(filename):
-    df = pd.read_csv(filename)
-    return df.dropna(subset=['Continent'])
+from notifier.notify import streamlit_loop, notify
+import threading
 
 
 def main():
     st.set_page_config(page_title="🦠 Corona Tracker DashBoard 🚑", page_icon="🦠", layout="wide")
-    run_spider()
-    df = get_data_from_csv('data.csv')
-    st.title("🦠 :blue[Corona] :red[DashBoard] :green[Tracker] 🚑")
+    if hasattr(streamlit_loop, 'spider_thread'):
+        if not streamlit_loop.spider_thread.is_alive():
+            streamlit_loop.spider_thread = threading.Thread(target=run_spider)
+            streamlit_loop.spider_thread.start()
+    else:
+        streamlit_loop.spider_thread = threading.Thread(target=run_spider)
+    streamlit_loop.df = pd.read_csv("data.csv").dropna(subset=['Continent'])
+    st.title("🦠 :blue[Corona] :red[DashBoard] :green[Tracker] 🚑 ")  # + str(len(streamlit_loop.df)))
     st.sidebar.header("Corona Filter 🚑")
     continent = st.sidebar.multiselect(
         "Select the Continent:",
-        options=df['Continent'].unique(),
-        default=df['Continent'].unique()[0]
+        options=streamlit_loop.df['Continent'].unique(),
+        default=streamlit_loop.df['Continent'].unique()[0]
     )
     country = st.sidebar.multiselect(
         "Select the Country:",
-        options=df['Country'].unique(),
-        default=df['Country'].unique()[0]
+        options=streamlit_loop.df['Country'].unique(),
+        default=streamlit_loop.df['Country'].unique()[0]
     )
     st.sidebar.markdown('''
     ---
     Created with ❤️ by A00N.
     ''')
-    df_selection = df.query(
+    df_selection = streamlit_loop.df.query(
         "Country == @country | Continent == @continent"
     )
     if df_selection.empty:
@@ -146,8 +146,9 @@ def main():
         with st.container(border=True):
             left, right = st.columns(2)
             with left:
-                attribute_selectbox = st.selectbox('Select Attribute', [column for column in df.columns if
-                                                                        column not in ['Country', 'Continent']])
+                attribute_selectbox = st.selectbox('Select Attribute',
+                                                   [column for column in streamlit_loop.df.columns if
+                                                    column not in ['Country', 'Continent']])
             with right:
                 top_k_options = {
                     'Top 5': 5,
@@ -158,12 +159,13 @@ def main():
                 top_k_selectbox = st.selectbox('Select Top K', list(top_k_options.keys()))
 
             fig = px.bar(
-                df.sort_values(attribute_selectbox, ascending=False).iloc[:top_k_options[top_k_selectbox]],
+                streamlit_loop.df.sort_values(attribute_selectbox, ascending=False).iloc[
+                :top_k_options[top_k_selectbox]],
                 x='Country', y=attribute_selectbox, title=f"Top Countries by {top_k_selectbox} in descending order")
             st.plotly_chart(fig, use_container_width=True)
     with st.container(border=True):
         box_option = st.selectbox("Select an option", ['Deaths/ 1M pop', 'Tests/ 1M pop '])
-        fig = px.box(df[df['Continent'] != 'All'], x='Continent', y=box_option,
+        fig = px.box(streamlit_loop.df[streamlit_loop.df['Continent'] != 'All'], x='Continent', y=box_option,
                      title='Box Plot of Total Cases by Continent', color='Continent')
         st.plotly_chart(fig, use_container_width=True)
     col1, col2 = st.columns(2)
@@ -179,14 +181,14 @@ def main():
     with st.container(border=True):
         continent_option = st.selectbox("Select a continent",
                                         ['Africa', 'Asia', 'Europe', 'North america', 'South america', 'USA', 'World'])
-        fig = px.choropleth(df,
+        fig = px.choropleth(streamlit_loop.df,
                             locations='Country',
                             locationmode='country names',
                             color='Total Cases',
                             hover_name='Country',
                             color_continuous_scale='RdYlGn_r',
                             title='Total Cases by Country',
-                            range_color=(1, df['Total Cases'].max() / 1000),
+                            range_color=(1, streamlit_loop.df['Total Cases'].max() / 1000),
                             scope=continent_option.lower(),
                             height=800,
                             width=1400
@@ -194,27 +196,11 @@ def main():
         st.plotly_chart(fig, use_container_width=True)
 
 
-# @st.cache_resource
 def run_spider():
-    # subprocess.call(sys.executable + " -m scrapy crawl covid")
-    if os.path.exists("last_execution.txt"):
-        with open("last_execution.txt", "r") as file:
-            last_execution_str = file.read().strip()
-        last_execution_time = datetime.strptime(last_execution_str, "%Y-%m-%d %H:%M:%S")
-
-        current_time = datetime.now()
-        time_difference = current_time - last_execution_time
-
-        if time_difference > timedelta(minutes=10):
-            st.toast("Please wait for the spider to finish")
-            subprocess.call([sys.executable, "-m", "scrapy", "crawl", "covid"])
-            with open("last_execution.txt", "w") as file:
-                file.write(current_time.strftime("%Y-%m-%d %H:%M:%S"))
-    else:
-        st.toast("Please wait for the spider to finish")
-        subprocess.call([sys.executable, "-m", "scrapy", "crawl", "covid"])
-        with open("last_execution.txt", "w") as file:
-            file.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    time.sleep(30)
+    print('Scraping data... ' + threading.current_thread().name)
+    subprocess.call([sys.executable, "-m", "scrapy", "crawl", "covid"])
+    streamlit_loop.call_soon_threadsafe(notify)
 
 
 if __name__ == '__main__':
